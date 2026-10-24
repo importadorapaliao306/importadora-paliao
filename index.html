@@ -283,10 +283,6 @@ footer.foot a{color:var(--gold-hi)}
           </div>
         </div>
         <div class="field">
-          <span class="lbl">¿Cómo prefieres pagar?</span>
-          <div class="pills" id="payPills" role="radiogroup" aria-label="Método de pago"></div>
-        </div>
-        <div class="field">
           <label for="f_notas">Notas <small>(opcional)</small></label>
           <textarea id="f_notas" name="notas" maxlength="300" placeholder="Barrio, punto de referencia, horario de entrega…"></textarea>
         </div>
@@ -383,8 +379,6 @@ function pintarMarca() {
   }
   $('#foot').innerHTML = `© ${new Date().getFullYear()} ${esc(nombre)} · Tienda privada. Tu pedido llega directo a nosotros y lo confirmamos contigo.` +
     (AJ.whatsapp ? `<br><a target="_blank" rel="noopener" href="${esc(D.telWA(AJ.whatsapp))}">Escríbenos por WhatsApp</a>` : '');
-  $('#payPills').innerHTML = (AJ.metodos_pago || []).map((m, i) =>
-    `<label class="pill"><input type="radio" name="pago" value="${esc(m)}" required ${i === 0 ? 'checked' : ''}><span>${esc(m)}</span></label>`).join('');
   $('#shipNote').textContent = AJ.nota_envio || '';
   $('#demoBar').hidden = D.modo !== 'demo';
 }
