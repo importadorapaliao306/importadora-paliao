@@ -137,7 +137,7 @@ function limpiarAjustes(a) {
   }
   return o;
 }
-/* Inventario: las unidades salen SOLO cuando tú confirmas el pago. Si reversas el pago o cancelas un pedido ya pagado, vuelven.
+/* Inventario: las unidades salen SOLO cuando tú confirmas el pedido. Si reversas la confirmación o cancelas un pedido ya confirmado, vuelven.
    Despachar o dejar el pedido en "nuevo" no toca el inventario. Devuelve qué hacer con el stock y qué campos cambiar. */
 function planPedido(p, cambio) {
   const pagado = p.pago_estado === 'confirmado', desc = !!p.stock_descontado;
@@ -149,14 +149,14 @@ function planPedido(p, cambio) {
   }
   if (p.estado === 'cancelado') throw new Error('Este pedido está cancelado: ya no se puede modificar.');
   if (cambio.tipo === 'pagar') {
-    if (pagado) throw new Error('Este pedido ya tiene el pago confirmado.');
+    if (pagado) throw new Error('Este pedido ya está confirmado.');
     return {
       campos: { pago_estado: 'confirmado', pago_metodo: String(cambio.metodo || '').trim().slice(0, 40), pago_ref: String(cambio.ref || '').trim().slice(0, 80), pago_fecha: new Date().toISOString() },
       stock: desc ? null : 'descontar'
     };
   }
   if (cambio.tipo === 'reversar') {
-    if (!pagado) throw new Error('Este pedido no tiene un pago confirmado.');
+    if (!pagado) throw new Error('Este pedido no está confirmado.');
     return { campos: { pago_estado: 'pendiente', pago_metodo: '', pago_ref: '', pago_fecha: null }, stock: desc ? 'devolver' : null };
   }
   throw new Error('Acción no válida.');
@@ -173,39 +173,30 @@ const nuevosPrimero = ps => ps.slice().sort((a, b) => String(b.creado).localeCom
 /* ===================================================================
    MODO DEMOSTRACIÓN (todo en localStorage de este navegador)
    =================================================================== */
-/* ---- documento: cotización / comprobante de pago ----
+/* ---- documento: cotización / pedido confirmado ----
    Un solo constructor para todo: el texto de WhatsApp, el asunto y los campos del correo y el papel que ves en el panel.
-   Mientras el pago no esté confirmado es una COTIZACIÓN; al confirmarlo pasa a COMPROBANTE DE PAGO.
+   Mientras el pedido no esté confirmado es una COTIZACIÓN; al confirmarlo pasa a PEDIDO CONFIRMADO.
    (No es factura electrónica de la DIAN: es un soporte interno del pedido.) */
 function documento(o, aj) {
   aj = aj || {}; o = o || {};
-  const c = o.cliente || {}, its = o.items || [], pagado = o.pago_estado === 'confirmado';
+  const c = o.cliente || {}, its = o.items || [], conf = o.pago_estado === 'confirmado';
   const tienda = aj.nombre_tienda || 'IMPORTADORA PALIAO';
-  const titulo = pagado ? 'COMPROBANTE DE PAGO' : 'COTIZACIÓN';
-  const estado = pagado ? 'PAGADO' : 'PENDIENTE DE PAGO';
+  const titulo = conf ? 'PEDIDO CONFIRMADO' : 'COTIZACIÓN';
+  const estado = conf ? 'CONFIRMADO' : 'PENDIENTE DE CONFIRMACIÓN';
   const lin = it => `${it.cantidad} × ${it.nombre} — ${dinero(it.precio * it.cantidad)}`;
-  const pagoCli = c.pago || '—';
   const dir = [c.ciudad, c.direccion].filter(Boolean).join(' · ');
-  const L = [];
-  L.push(`*${tienda}*`, `*${titulo}* · ${estado}`, `Código: *${o.codigo}*`, `Fecha: ${fecha(o.creado)}`, '');
-  L.push('*Cliente*', c.nombre || '—', `Cel: ${c.telefono || '—'}${c.correo ? ' · ' + c.correo : ''}`, dir || '—');
-  if (c.notas) L.push(`Notas: ${c.notas}`);
-  L.push('', '*Productos*', ...its.map(lin), '', `*TOTAL: ${dinero(o.total)}*`, '');
-  if (pagado) {
-    L.push(`Pago confirmado${o.pago_metodo ? ' por ' + o.pago_metodo : ''}${o.pago_ref ? ' · ref. ' + o.pago_ref : ''}${o.pago_fecha ? ' · ' + fecha(o.pago_fecha) : ''}.`);
-  } else {
-    L.push(`Forma de pago elegida: ${pagoCli}`);
-    if (aj.instrucciones_pago) L.push('', '*Cómo pagar*', aj.instrucciones_pago);
-    L.push('', 'Las unidades salen del inventario cuando el pago esté confirmado.');
-  }
+  /* Texto de WhatsApp: solo lo esencial (el código, el correo y las notas van en el correo y en el panel). */
+  const L = [`*${tienda}*`, `*${titulo}*`, `Fecha: ${fecha(o.creado)}`, '',
+    '*Cliente*', c.nombre || '—', `Cel: ${c.telefono || '—'}`, dir || '—', '',
+    '*Productos*', ...its.map(lin), '', `*TOTAL: ${dinero(o.total)}*`];
   const campos = [
     ['Documento', `${titulo} · ${estado}`], ['Pedido', o.codigo], ['Fecha', fecha(o.creado)],
     ['Cliente', c.nombre || '—'], ['Celular', c.telefono || '—'], ['Correo del cliente', c.correo || '—'],
-    ['Ciudad', c.ciudad || '—'], ['Dirección', c.direccion || '—'], ['Forma de pago elegida', pagoCli], ['Notas', c.notas || '—'],
+    ['Ciudad', c.ciudad || '—'], ['Dirección', c.direccion || '—'], ['Notas', c.notas || '—'],
     ...its.map((it, i) => ['Producto ' + (i + 1), lin(it)]), ['TOTAL', dinero(o.total)]
   ];
-  if (pagado) campos.push(['Pago confirmado', `${o.pago_metodo || '—'}${o.pago_ref ? ' · ref. ' + o.pago_ref : ''}`]);
-  return { titulo, estado, pagado, tienda, texto: L.join('\n'), campos, asunto: `${titulo} ${o.codigo} · ${estado} · ${c.nombre || ''} · ${dinero(o.total)}` };
+  if (conf && o.pago_fecha) campos.push(['Confirmado el', fecha(o.pago_fecha)]);
+  return { titulo, estado, confirmado: conf, pagado: conf, tienda, texto: L.join('\n'), campos, asunto: `${titulo} ${o.codigo} · ${estado} · ${c.nombre || ''} · ${dinero(o.total)}` };
 }
 
 const Demo = (() => {

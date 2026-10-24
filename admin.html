@@ -324,7 +324,7 @@ dialog.dlg>form{display:flex;flex-direction:column;max-height:92vh}
           <span class="ayuda">Al terminar su pedido, el cliente ve un botón que le abre WhatsApp hacia este número con la cotización ya escrita; solo le falta tocar "Enviar".</span></div>
         <div class="field"><label for="aNota">Nota sobre el envío</label><input id="aNota" maxlength="200"></div>
         <div class="field"><label for="aPagos">Métodos de pago <small>(uno por línea)</small></label><textarea id="aPagos" rows="4"></textarea></div>
-        <div class="field"><label for="aInstr">Cómo debe pagar el cliente <small>(se muestra en su pantalla final y en la cotización)</small></label><textarea id="aInstr" rows="4" maxlength="600" placeholder="Ej.: Nequi 300 000 0000 a nombre de Daniel. Envía el comprobante por WhatsApp."></textarea></div>
+        <div class="field"><label for="aInstr">Cómo debe pagar el cliente <small>(opcional, se muestra en su pantalla final)</small></label><textarea id="aInstr" rows="3" maxlength="600" placeholder="Ej.: Nequi 300 000 0000 a nombre de Daniel."></textarea></div>
         <div class="formerr" id="ajErr" hidden></div>
         <button class="btn gold" type="submit" id="ajGuardar">Guardar cambios</button>
       </form>
@@ -385,13 +385,12 @@ dialog.dlg>form{display:flex;flex-direction:column;max-height:92vh}
   </form>
 </dialog>
 
-<!-- ============ Diálogo: confirmar pago ============ -->
+<!-- ============ Diálogo: confirmar pedido ============ -->
 <dialog class="dlg" id="dlgPago" aria-labelledby="pgTitulo">
   <form id="formPago" novalidate>
     <div class="dhead"><h2 id="pgTitulo">Confirmar pedido</h2><button type="button" class="icon-btn dark" data-a="cerrar-dlg" data-ico="close" aria-label="Cerrar"></button></div>
     <div class="dbody">
       <p class="pgresumen" id="pgResumen"></p>
-      <div class="field"><label for="pgMetodo">¿Cómo pagó?</label><select id="pgMetodo"></select></div>
       <div class="nota-stock" id="pgStock"></div>
       <div class="formerr" id="pgErr" hidden></div>
     </div>
@@ -399,7 +398,7 @@ dialog.dlg>form{display:flex;flex-direction:column;max-height:92vh}
   </form>
 </dialog>
 
-<!-- ============ Diálogo: cotización / comprobante ============ -->
+<!-- ============ Diálogo: cotización / pedido confirmado ============ -->
 <dialog class="dlg" id="dlgDoc" aria-labelledby="docTitulo">
   <div class="dhead"><h2 id="docTitulo">Cotización</h2><button type="button" class="icon-btn dark" data-a="cerrar-dlg" data-ico="close" aria-label="Cerrar"></button></div>
   <div class="dbody"><div class="papel" id="docPapel"></div></div>
@@ -746,9 +745,8 @@ $('#tab-categorias').addEventListener('click', async ev => {
 const ETQ = { nuevo: 'Nuevo', despachado: 'Despachado', cancelado: 'Cancelado' };
 const pagado = o => o.pago_estado === 'confirmado';
 const viva = o => o.estado !== 'cancelado';
-const esContra = o => /contra/i.test((o.cliente || {}).pago || '');
 const FILTROS = [
-  ['cobrar', 'Por cobrar', o => viva(o) && !pagado(o)],
+  ['cobrar', 'Por confirmar', o => viva(o) && !pagado(o)],
   ['despachar', 'Por despachar', o => viva(o) && pagado(o) && o.estado === 'nuevo'],
   ['despachado', 'Despachados', o => o.estado === 'despachado'],
   ['cancelado', 'Cancelados', o => o.estado === 'cancelado'],
@@ -763,7 +761,7 @@ function renderPedidos() {
   $('#pedList').innerHTML = lista.length ? lista.map(cardPedido).join('') : `<div class="vacio">${S.pedidos.length ? 'No hay pedidos en esta lista.' : 'Aún no han llegado pedidos.'}</div>`;
 }
 function avisosPedido(o) {
-  if (!viva(o) || pagado(o)) return '';           // con el pago confirmado el inventario ya salió
+  if (!viva(o) || pagado(o)) return '';           // con el pedido confirmado el inventario ya salió
   const av = [];
   (o.items || []).forEach(it => {
     const p = S.prods.find(x => x.id === it.id);
@@ -774,29 +772,29 @@ function avisosPedido(o) {
     }
   });
   const suma = (o.items || []).reduce((a, it) => a + it.precio * it.cantidad, 0);
-  if (suma !== o.total) av.push(`El total del pedido (${dinero(o.total)}) no coincide con la suma de sus productos (${dinero(suma)}). Revísalo antes de cobrar.`);
+  if (suma !== o.total) av.push(`El total del pedido (${dinero(o.total)}) no coincide con la suma de sus productos (${dinero(suma)}). Revísalo antes de confirmar.`);
   return av.length ? `<ul class="avisos">${av.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
 }
 function notaPedido(o) {
-  if (o.estado === 'cancelado') return pagado(o) ? 'Cancelado. Ya había pago confirmado: las unidades volvieron al inventario; recuerda devolverle el dinero al cliente.' : '';
-  if (!pagado(o)) return 'Inventario sin tocar: las unidades salen cuando confirmes el pago.';
-  return 'Pago confirmado · inventario descontado. Si reversas el pago o cancelas el pedido, las unidades vuelven.';
+  if (o.estado === 'cancelado') return pagado(o) ? 'Cancelado. Estaba confirmado: las unidades volvieron al inventario.' : '';
+  if (!pagado(o)) return 'Inventario sin tocar: las unidades salen cuando confirmes el pedido.';
+  return 'Pedido confirmado · inventario descontado. Si reversas la confirmación o cancelas el pedido, las unidades vuelven.';
 }
 function cardPedido(o) {
   const c = o.cliente || {}, its = o.items || [], pg = pagado(o);
-  const bDoc = `<button class="btn ghost sm" data-a="ped-doc">${pg ? 'Comprobante' : 'Cotización'}</button>`;
+  const bDoc = `<button class="btn ghost sm" data-a="ped-doc">${pg ? 'Documento' : 'Cotización'}</button>`;
   let acc = '';
   if (viva(o)) {
-    acc += pg ? `<button class="btn ghost sm" data-a="ped-reversar">Reversar pago</button>` : `<button class="btn gold sm" data-a="ped-pagar">Confirmar pedido</button>`;
+    acc += pg ? `<button class="btn ghost sm" data-a="ped-reversar">Reversar confirmación</button>` : `<button class="btn gold sm" data-a="ped-pagar">Confirmar pedido</button>`;
     acc += o.estado === 'nuevo' ? `<button class="btn ${pg ? 'gold' : 'ghost'} sm" data-a="ped-estado" data-e="despachado">Marcar despachado</button>` : `<button class="btn ghost sm" data-a="ped-estado" data-e="nuevo">Volver a nuevo</button>`;
     acc += `<button class="btn danger sm" data-a="ped-estado" data-e="cancelado">Cancelar pedido</button>`;
   } else acc += `<button class="btn danger sm" data-a="ped-eliminar">Eliminar</button>`;
   const nota = notaPedido(o);
   return `<article class="ped" data-id="${esc(o.id)}">
-    <div class="pedhead"><span class="codigo">${esc(o.codigo)}</span><span class="est est-${esc(o.estado)}">${ETQ[o.estado] || esc(o.estado)}</span><span class="pg pg-${pg ? 'confirmado' : 'pendiente'}">${pg ? 'Pagado' : 'Por cobrar'}</span><span class="muted">${esc(D.fecha(o.creado))}</span><span class="ptotal gtext">${dinero(o.total)}</span></div>
+    <div class="pedhead"><span class="codigo">${esc(o.codigo)}</span><span class="est est-${esc(o.estado)}">${ETQ[o.estado] || esc(o.estado)}</span><span class="pg pg-${pg ? 'confirmado' : 'pendiente'}">${pg ? 'Confirmado' : 'Por confirmar'}</span><span class="muted">${esc(D.fecha(o.creado))}</span><span class="ptotal gtext">${dinero(o.total)}</span></div>
     <div class="pedbody">
-      <div><b>${esc(c.nombre)}</b><br>${esc(c.telefono)}${c.correo ? ' · ' + esc(c.correo) : ''}<br>${esc(c.ciudad)} · ${esc(c.direccion)}<br><span class="muted">Pago elegido: ${esc(c.pago || '—')}${c.notas ? '<br>Notas: ' + esc(c.notas) : ''}</span>
-        ${pg ? `<div class="pagoinfo">✔ Pagó por ${esc(o.pago_metodo || '—')}${o.pago_ref ? ' · ref. ' + esc(o.pago_ref) : ''}${o.pago_fecha ? ' · ' + esc(D.fecha(o.pago_fecha)) : ''}</div>` : ''}</div>
+      <div><b>${esc(c.nombre)}</b><br>${esc(c.telefono)}${c.correo ? ' · ' + esc(c.correo) : ''}<br>${esc(c.ciudad)} · ${esc(c.direccion)}<br><span class="muted">Forma elegida: ${esc(c.pago || '—')}${c.notas ? '<br>Notas: ' + esc(c.notas) : ''}</span>
+        ${pg && o.pago_fecha ? `<div class="pagoinfo">✔ Confirmado · ${esc(D.fecha(o.pago_fecha))}</div>` : ''}</div>
       <ul class="its">${its.map(it => `<li><span>${it.cantidad} × ${esc(it.nombre)}</span><span>${dinero(it.precio * it.cantidad)}</span></li>`).join('')}</ul>
     </div>
     ${avisosPedido(o)}
@@ -828,21 +826,17 @@ async function cambiarPedido(o, acc, datos) {
     else if (acc === 'reversar') r = await D.admin.reversarPago(o.id);
     else r = await D.admin.estadoPedido(o.id, datos.estado);
     r = r || {}; aplicarLocal(o, acc, r, datos || {});
-    await tras(acc === 'pagar' ? 'Pago confirmado · inventario descontado ✓' : acc === 'reversar' ? 'Pago reversado · inventario devuelto ✓'
+    await tras(acc === 'pagar' ? 'Pedido confirmado · inventario descontado ✓' : acc === 'reversar' ? 'Confirmación reversada · inventario devuelto ✓'
       : r.stock === 'devuelto' ? 'Pedido cancelado · inventario devuelto ✓' : 'Pedido actualizado ✓', r);
     return true;
   } catch (er) { toast(er.message, true); recargar(true); return false; }
 }
 
-/* --- confirmar pago --- */
+/* --- confirmar pedido --- */
 let pagando = null;
 function abrirPago(o) {
   pagando = o; mostrarError($('#pgErr'), '');
   $('#pgResumen').innerHTML = `Pedido <b>${esc(o.codigo)}</b> · ${esc((o.cliente || {}).nombre)} · <b>${dinero(o.total)}</b>`;
-  const base = [(o.cliente || {}).pago, ...(S.aj.metodos_pago || []), 'Efectivo', 'Otro'].filter(Boolean);
-  const metodos = [...new Set(base)];
-  $('#pgMetodo').innerHTML = metodos.map(m => `<option>${esc(m)}</option>`).join('');
-  $('#pgMetodo').value = (o.cliente || {}).pago && metodos.includes(o.cliente.pago) ? o.cliente.pago : metodos[0];
   const filas = unir(o.items).map(it => {
     const p = S.prods.find(x => x.id === it.id), q = p ? p.stock : 0, corto = !p || q < it.cantidad;
     return `<li class="${corto ? 'corto' : ''}">${it.cantidad} × ${esc(it.nombre)} — ${p ? `quedan ${q}${corto ? ' (insuficiente)' : ' → ' + (q - it.cantidad)}` : 'ya no existe en el catálogo'}</li>`;
@@ -858,7 +852,7 @@ function unir(items) {
 $('#formPago').addEventListener('submit', async ev => {
   ev.preventDefault();
   const o = pagando; if (!o) return;
-  const datos = { metodo: $('#pgMetodo').value, ref: '' };
+  const datos = { metodo: '', ref: '' };
   await ocupado($('#pgOk'), 'Confirmando…', async () => {
     if (await cambiarPedido(o, 'pagar', datos)) { $('#dlgPago').close(); pagando = null; }
   });
@@ -869,7 +863,7 @@ let docActual = null;
 function abrirDoc(o) {
   const d = D.documento(o, S.aj), c = o.cliente || {}, its = o.items || [], pg = d.pagado;
   docActual = d;
-  $('#docTitulo').textContent = d.titulo === 'COTIZACIÓN' ? 'Cotización' : 'Comprobante de pago';
+  $('#docTitulo').textContent = d.titulo === 'COTIZACIÓN' ? 'Cotización' : 'Pedido confirmado';
   $('#docPapel').innerHTML = `
     <h3>${esc(d.tienda)}</h3><p class="sub">${esc(String(S.aj.eslogan || '').toUpperCase())}</p>
     <div class="tit"><b>${esc(d.titulo)}</b><span class="sello ${pg ? 'ok' : 'pend'}">${esc(d.estado)}</span></div>
@@ -880,9 +874,9 @@ function abrirDoc(o) {
     </tbody></table>
     <div class="tot"><span>TOTAL</span><span>${dinero(o.total)}</span></div>
     <div class="caja">${pg
-      ? `Pago confirmado${o.pago_metodo ? ' por ' + esc(o.pago_metodo) : ''}${o.pago_ref ? '\nReferencia: ' + esc(o.pago_ref) : ''}${o.pago_fecha ? '\n' + esc(D.fecha(o.pago_fecha)) : ''}`
-      : `Forma de pago elegida: ${esc(c.pago || '—')}${S.aj.instrucciones_pago ? '\n\n' + esc(S.aj.instrucciones_pago) : ''}`}</div>
-    <p class="pie">${pg ? 'Soporte de pago interno de la tienda. No es factura electrónica.' : 'Cotización sujeta a confirmación de pago y disponibilidad. No es factura electrónica.'}</p>`;
+      ? `Pedido confirmado${o.pago_fecha ? '\n' + esc(D.fecha(o.pago_fecha)) : ''}`
+      : 'Pendiente de confirmación del pedido.'}</div>
+    <p class="pie">${pg ? 'Soporte interno de la tienda. No es factura electrónica.' : 'Cotización sujeta a confirmación del pedido y a disponibilidad. No es factura electrónica.'}</p>`;
   $('#dlgDoc').showModal();
 }
 
@@ -895,7 +889,7 @@ $('#tab-pedidos').addEventListener('click', async ev => {
   if (a === 'ped-doc') return abrirDoc(o);
   if (a === 'ped-pagar') return abrirPago(o);
   if (a === 'ped-reversar') {
-    if (!await confirmar('¿Reversar el pago de ' + o.codigo + '?', 'El pedido vuelve a "Por cobrar" y las unidades regresan al inventario.', 'Reversar pago', true)) return;
+    if (!await confirmar('¿Reversar la confirmación de ' + o.codigo + '?', 'El pedido vuelve a "Por confirmar" y las unidades regresan al inventario.', 'Reversar confirmación', true)) return;
     return void await cambiarPedido(o, 'reversar');
   }
   if (a === 'ped-eliminar') {
@@ -907,9 +901,9 @@ $('#tab-pedidos').addEventListener('click', async ev => {
   if (a !== 'ped-estado') return;
   const e = b.dataset.e;
   if (e === 'cancelado' && !await confirmar('¿Cancelar el pedido ' + o.codigo + '?',
-      (pagado(o) ? 'Tenía el pago confirmado: las unidades vuelven al inventario y debes devolverle el dinero al cliente. ' : '') + 'Un pedido cancelado no se puede reactivar.', 'Cancelar pedido', true)) return;
-  if (e === 'despachado' && !pagado(o) && !esContra(o) &&
-      !await confirmar('Aún no confirmas el pago', 'El pedido ' + o.codigo + ' sigue "Por cobrar". ¿Lo despachas de todos modos? El inventario no se descuenta hasta que confirmes el pago.', 'Despachar igual')) return;
+      (pagado(o) ? 'Estaba confirmado: las unidades vuelven al inventario. ' : '') + 'Un pedido cancelado no se puede reactivar.', 'Cancelar pedido', true)) return;
+  if (e === 'despachado' && !pagado(o) &&
+      !await confirmar('Aún no confirmas el pedido', 'El pedido ' + o.codigo + ' sigue "Por confirmar". ¿Lo despachas de todos modos? El inventario no se descuenta hasta que lo confirmes.', 'Despachar igual')) return;
   await cambiarPedido(o, 'estado', { estado: e });
 });
 async function refrescarPedidos() {
