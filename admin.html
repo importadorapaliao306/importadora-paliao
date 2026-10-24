@@ -222,11 +222,18 @@ dialog.dlg>form{display:flex;flex-direction:column;max-height:92vh}
 .dfoot{display:flex;gap:10px;padding:14px 18px max(14px,env(safe-area-inset-bottom));border-top:1px solid var(--line)}
 .dfoot .btn{flex:1}
 @media(max-width:600px){dialog.dlg{margin:auto auto 0;width:100%;max-height:94vh;border-radius:26px 26px 0 0}}
-.foto{display:flex;gap:14px;align-items:center;margin-bottom:16px}
-.fotobox{width:132px;height:132px;border-radius:20px;overflow:hidden;background:#0b0905;border:1px solid var(--line-strong);flex:none}
-.fotobox img{width:100%;height:100%;object-fit:cover;display:block}
-.fotoact{display:grid;gap:8px;justify-items:start}
-.fotoact small{color:var(--muted);font-size:12px;max-width:200px}
+.fotos{margin-bottom:16px}
+.fhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px;font-weight:600}
+.fhead small{color:var(--muted);font-size:12px;font-weight:400}
+.fgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.ftile{position:relative;aspect-ratio:1;border-radius:16px;overflow:hidden;background:#0b0905;border:1px solid var(--line-strong)}
+.ftile img{width:100%;height:100%;object-fit:cover;display:block}
+.ftile .x{position:absolute;top:5px;right:5px;width:32px;height:32px;border-radius:50%;border:0;background:rgba(0,0,0,.8);color:#f5f0e1;display:grid;place-items:center;padding:0}
+.ftile .port{position:absolute;left:5px;right:5px;bottom:5px;min-height:30px;border-radius:9px;border:1px solid var(--line-strong);background:rgba(0,0,0,.8);color:var(--gold-hi);font:600 11px/1.1 var(--body);padding:4px 2px}
+.ftile .port.on{display:grid;place-items:center;background:var(--gold-grad);color:#0b0905;border-color:transparent;font-weight:700}
+.fadd{aspect-ratio:1;border:1.5px dashed var(--line-strong);border-radius:16px;background:transparent;color:var(--gold-hi);display:grid;place-items:center;align-content:center;gap:4px;font:600 13px/1.2 var(--body);padding:6px;text-align:center}
+.fadd:hover{background:rgba(212,175,55,.08)}
+.fnote{margin:8px 0 0;color:var(--muted);font-size:12px}
 .iconos{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
 .iconos label{position:relative}
 .iconos input{position:absolute;opacity:0;inset:0;cursor:pointer}
@@ -345,14 +352,11 @@ dialog.dlg>form{display:flex;flex-direction:column;max-height:92vh}
   <form id="formProd" novalidate>
     <div class="dhead"><h2 id="dProdTitulo">Nuevo producto</h2><button type="button" class="icon-btn dark" data-a="cerrar-dlg" data-ico="close" aria-label="Cerrar"></button></div>
     <div class="dbody">
-      <div class="foto">
-        <div class="fotobox"><img id="fotoImg" alt="Foto del producto"></div>
-        <div class="fotoact">
-          <input type="file" id="fFoto" accept="image/*" hidden>
-          <button type="button" class="btn ghost sm" data-a="elegir-foto"><span data-ico="camera" data-size="18" style="display:inline-flex"></span><span id="fotoTxt">Subir foto</span></button>
-          <button type="button" class="btn ghost sm" data-a="quitar-foto" id="btnQuitarFoto" hidden>Quitar foto</button>
-          <small>Se recorta en cuadrado: así se verá en la tienda.</small>
-        </div>
+      <div class="fotos">
+        <div class="fhead"><span>Fotos del producto</span><small id="fCount"></small></div>
+        <input type="file" id="fFoto" accept="image/*" multiple hidden>
+        <div class="fgrid" id="fGrid"></div>
+        <p class="fnote" id="fNote"></p>
       </div>
       <div class="field"><label for="pNombre">Nombre *</label><input id="pNombre" maxlength="120"></div>
       <div class="field"><label for="pCat">Categoría *</label><select id="pCat"></select></div>
@@ -519,13 +523,13 @@ function renderFiltro() {
 }
 function filaProd(p) {
   const out = p.stock <= 0, low = p.stock > 0 && p.stock <= 3;
-  const foto = p.imagen_url || D.arte(catDe(p.categoria_id).icono);
+  const foto = D.fotos(p)[0] || D.arte(catDe(p.categoria_id).icono);
   return `<article class="prow${p.activo ? '' : ' oculto'}" data-id="${esc(p.id)}">
     <img class="thumb" src="${esc(foto)}" alt="">
     <div class="pinfo">
       <h3>${esc(p.nombre)}</h3>
       <p class="muted">${esc(catDe(p.categoria_id).nombre || 'Sin categoría')}${p.detalle ? ' · ' + esc(p.detalle) : ''}</p>
-      <div class="flags">${!p.activo ? '<span class="flag">Oculto</span>' : ''}${out ? '<span class="flag warn">Agotado</span>' : ''}${low ? `<span class="flag">Quedan ${p.stock}</span>` : ''}${p.etiqueta ? `<span class="flag gold">${esc(p.etiqueta)}</span>` : ''}</div>
+      <div class="flags">${!p.activo ? '<span class="flag">Oculto</span>' : ''}${out ? '<span class="flag warn">Agotado</span>' : ''}${low ? `<span class="flag">Quedan ${p.stock}</span>` : ''}${p.etiqueta ? `<span class="flag gold">${esc(p.etiqueta)}</span>` : ''}${D.nFotos(p) > 1 ? `<span class="flag">${D.nFotos(p)} fotos</span>` : ''}</div>
     </div>
     <div class="pctl">
       <label class="mini">Precio (COP)<input class="in-precio" type="number" inputmode="numeric" min="0" step="any" value="${p.precio}"></label>
@@ -590,7 +594,6 @@ $('#plist').addEventListener('click', async ev => {
       if (!await confirmar('¿Eliminar este producto?', `"${p.nombre}" se borrará de la tienda y del inventario. Esta acción no se puede deshacer.`, 'Eliminar', true)) return;
       try {
         await D.admin.borrarProducto(id);
-        if (p.imagen_path) D.admin.borrarImagen(p.imagen_path);
         S.prods = S.prods.filter(x => x.id !== id); renderProds(); toast('Producto eliminado');
       } catch (e) { toast(e.message, true); }
       break;
@@ -613,12 +616,12 @@ $('#pq').addEventListener('input', e => { S.q = e.target.value; renderProds(); }
 $('#pfiltro').addEventListener('change', e => { S.fCat = e.target.value; renderProds(); });
 
 /* ---- diálogo de producto ---- */
-let fotoURL = null;
-function ponerFoto(src) { $('#fotoImg').src = src; }
-function fotoPlaceholder() { return D.arte((catDe($('#pCat').value) || {}).icono); }
+let fotoURLs = [];   // fotos nuevas aún sin guardar (se liberan al cerrar)
+function liberarFotos() { fotoURLs.forEach(u => URL.revokeObjectURL(u)); fotoURLs = []; }
 function abrirProd(p) {
   if (!S.cats.length) { toast('Primero crea una categoría.', true); mostrarTab('categorias'); return; }
-  S.edit = { id: p ? p.id : null, blob: null, quitar: false, url: p ? p.imagen_url : null, path: p ? p.imagen_path : null };
+  liberarFotos();
+  const E = S.edit = { id: p ? p.id : null, fotos: D.fotos(p || {}).map(url => ({ url, blob: null })), cargando: false };
   $('#dProdTitulo').textContent = p ? 'Editar producto' : 'Nuevo producto';
   $('#pCat').innerHTML = S.cats.map(c => `<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join('');
   $('#pNombre').value = p ? p.nombre : '';
@@ -630,46 +633,74 @@ function abrirProd(p) {
   $('#pActivo').checked = p ? p.activo : true;
   $('#fFoto').value = '';
   mostrarError($('#pErr'), '');
-  actualizarFotoUI();
+  $('#pGuardar').disabled = false;
+  if (p && D.nFotos(p) > E.fotos.length) {              // en el catálogo solo viene la portada: se piden las demás antes de poder guardar
+    E.cargando = true; $('#pGuardar').disabled = true;
+    D.admin.fotosTodas(p).then(lista => {
+      if (S.edit !== E) return;
+      E.fotos = lista.map(url => ({ url, blob: null })); E.cargando = false; $('#pGuardar').disabled = false; renderFotos();
+    }).catch(() => {
+      if (S.edit !== E) return;
+      mostrarError($('#pErr'), 'No se pudieron cargar las otras fotos. Cierra esta ventana y vuelve a abrir el producto.');
+    });
+  }
+  renderFotos();
   $('#dlgProd').showModal();
   setTimeout(() => $('#pNombre').focus(), 60);
 }
-function actualizarFotoUI() {
-  const E = S.edit, tiene = !!(E.blob || (E.url && !E.quitar));
-  ponerFoto(E.blob ? fotoURL : (E.url && !E.quitar ? E.url : fotoPlaceholder()));
-  $('#fotoTxt').textContent = tiene ? 'Cambiar foto' : 'Subir foto';
-  $('#btnQuitarFoto').hidden = !tiene;
+function renderFotos() {
+  const F = S.edit.fotos, max = D.MAX_FOTOS;
+  $('#fCount').textContent = `${F.length} de ${max}`;
+  $('#fGrid').innerHTML = F.map((f, i) => `<div class="ftile"><img src="${esc(f.url)}" alt="Foto ${i + 1}">
+      <button type="button" class="x" data-a="foto-quitar" data-i="${i}" aria-label="Quitar la foto ${i + 1}">${ico('close', 16)}</button>
+      ${i === 0 ? '<span class="port on">Portada</span>' : `<button type="button" class="port" data-a="foto-portada" data-i="${i}">Hacer portada</button>`}
+    </div>`).join('') +
+    (F.length < max && !S.edit.cargando ? `<button type="button" class="fadd" data-a="elegir-foto">${ico('camera', 24)}<span>${F.length ? 'Agregar foto' : 'Subir fotos'}</span></button>` : '');
+  $('#fNote').textContent = S.edit.cargando ? 'Cargando las demás fotos…' : F.length
+    ? 'La primera es la portada y se ve en el catálogo. Las fotos se recortan en cuadrado.'
+    : 'Sin fotos, la tienda muestra el ícono de la categoría. Puedes elegir varias a la vez.';
 }
-$('#pCat').addEventListener('change', () => { const E = S.edit; if (E && !E.blob && !(E.url && !E.quitar)) actualizarFotoUI(); });
 $('#fFoto').addEventListener('change', async ev => {
-  const f = ev.target.files && ev.target.files[0]; if (!f) return;
+  const files = [...(ev.target.files || [])]; ev.target.value = '';
+  if (!files.length) return;
   const err = $('#pErr'); mostrarError(err, '');
-  try {
-    const blob = await D.reducirImagen(f);
-    if (fotoURL) URL.revokeObjectURL(fotoURL);
-    fotoURL = URL.createObjectURL(blob);
-    S.edit.blob = blob; S.edit.quitar = false; actualizarFotoUI();
-  } catch (e) { mostrarError(err, e.message); }
-  ev.target.value = '';
+  const E = S.edit;
+  if (E.cargando) return;
+  const libres = D.MAX_FOTOS - E.fotos.length;
+  const usar = files.slice(0, Math.max(0, libres)), sobran = files.length - usar.length;
+  const fallos = [];
+  for (const f of usar) {
+    try {
+      const blob = await D.reducirImagen(f);
+      if (S.edit !== E) return;                       // se cerró o cambió de producto mientras se procesaba
+      const url = URL.createObjectURL(blob); fotoURLs.push(url);
+      E.fotos.push({ url, blob });
+      renderFotos();
+    } catch (e) { fallos.push(e.message); }
+  }
+  const msg = [];
+  if (sobran > 0) msg.push(`Máximo ${D.MAX_FOTOS} fotos por producto: ${sobran === 1 ? 'una quedó' : sobran + ' quedaron'} fuera.`);
+  if (fallos.length) msg.push(fallos[0]);
+  if (msg.length) mostrarError(err, msg.join(' '));
 });
+$('#dlgProd').addEventListener('close', liberarFotos);
 $('#formProd').addEventListener('submit', async ev => {
   ev.preventDefault();
   const E = S.edit, err = $('#pErr'); mostrarError(err, '');
+  if (E.cargando) return;                               // aún se están trayendo las demás fotos
   await ocupado($('#pGuardar'), 'Guardando…', async () => {
     const campos = {
       nombre: $('#pNombre').value, categoria_id: $('#pCat').value, detalle: $('#pDetalle').value,
       precio: $('#pPrecio').value, stock: $('#pStock').value, etiqueta: $('#pEtiqueta').value, activo: $('#pActivo').checked
     };
-    let subida = null;
     try {
-      D.validarProducto(campos);                       // revisa todo antes de subir la foto
-      if (E.blob) { subida = await D.admin.subirImagen(E.blob); campos.imagen_url = subida.url; campos.imagen_path = subida.path; }
-      else if (E.quitar) { campos.imagen_url = null; campos.imagen_path = null; }
+      D.validarProducto(campos);                       // revisa todo antes de subir las fotos
+      const urls = [];
+      for (const f of E.fotos) urls.push(f.blob ? (await D.admin.subirImagen(f.blob)).url : f.url);
+      campos.imagenes = urls;                          // la primera es la portada (imagen_url se calcula sola)
+      D.validarProducto({ imagenes: urls });           // revisa el peso total antes de guardar
       if (E.id) campos.id = E.id;
-      let guardado;
-      try { guardado = await D.admin.guardarProducto(campos); }
-      catch (e) { if (subida) D.admin.borrarImagen(subida.path); throw e; }
-      if ((E.blob || E.quitar) && E.path) D.admin.borrarImagen(E.path);   // se reemplazó la foto anterior
+      const guardado = await D.admin.guardarProducto(campos);
       const i = S.prods.findIndex(x => x.id === guardado.id);
       if (i >= 0) S.prods[i] = guardado; else S.prods.unshift(guardado);
       $('#dlgProd').close(); renderProds(); toast(E.id ? 'Producto actualizado ✓' : 'Producto creado ✓');
@@ -960,7 +991,8 @@ document.addEventListener('click', async ev => {
       }
       break;
     case 'elegir-foto': $('#fFoto').click(); break;
-    case 'quitar-foto': S.edit.blob = null; S.edit.quitar = true; actualizarFotoUI(); break;
+    case 'foto-quitar': S.edit.fotos.splice(+b.dataset.i, 1); renderFotos(); break;
+    case 'foto-portada': { const [f] = S.edit.fotos.splice(+b.dataset.i, 1); S.edit.fotos.unshift(f); renderFotos(); break; }
     case 'nuevo-prod': if (!b.closest('#plist')) abrirProd(null); break;
     case 'nueva-cat': if (!b.closest('#tab-categorias') && !b.closest('#plist')) abrirCat(null); break;
     case 'recargar': recargar(); break;
