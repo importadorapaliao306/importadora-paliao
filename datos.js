@@ -21,9 +21,10 @@ const entero = v => { const n = Math.round(Number(String(v ?? '').replace(/[^\d.
 const fecha = iso => { try { return new Date(iso).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(iso || ''); } };
 const telWA = tel => { let d = String(tel || '').replace(/\D/g, ''); if (d.length === 10 && d[0] === '3') d = '57' + d; return 'https://wa.me/' + d; };
 const AJUSTES_BASE = {
-  id: 1, nombre_tienda: 'IMPORTADORA PALIAO', eslogan: 'ENTRETENEMOS TU MUNDO', correo_pedidos: '', whatsapp: '',
+  id: 1, nombre_tienda: 'IMPORTADORA PALIAO', eslogan: 'ENTRETENEMOS TU MUNDO', correo_pedidos: 'importadorapaliao306@gmail.com', whatsapp: '',
   nota_envio: 'El costo del envío se confirma contigo antes de despachar.',
-  metodos_pago: ['Contra entrega', 'Transferencia', 'Nequi', 'Daviplata']
+  metodos_pago: ['Contra entrega', 'Transferencia', 'Nequi', 'Daviplata'],
+  instrucciones_pago: ''
 };
 
 /* ------------------------------------------------------------------- iconos */
@@ -129,19 +130,38 @@ function limpiarAjustes(a) {
   }
   if ('whatsapp' in a) o.whatsapp = String(a.whatsapp || '').replace(/[^\d]/g, '').slice(0, 15);
   if ('nota_envio' in a) o.nota_envio = String(a.nota_envio || '').trim().slice(0, 200);
+  if ('instrucciones_pago' in a) o.instrucciones_pago = String(a.instrucciones_pago || '').replace(/\r/g, '').trim().slice(0, 600);
   if ('metodos_pago' in a) {
     o.metodos_pago = [...new Set((a.metodos_pago || []).map(x => String(x).trim().slice(0, 30)).filter(Boolean))].slice(0, 8);
     if (!o.metodos_pago.length) throw new Error('Deja al menos un método de pago.');
   }
   return o;
 }
-/* Inventario: se descuenta cuando TÚ marcas el pedido como despachado, y se devuelve si lo regresas a "nuevo" o lo cancelas después. */
-function accionStock(ped, nuevoEstado) {
-  const desc = !!ped.stock_descontado;
-  if (nuevoEstado === 'despachado' && !desc) return 'descontar';
-  if ((nuevoEstado === 'nuevo' || nuevoEstado === 'cancelado') && desc) return 'devolver';
-  return null;
+/* Inventario: las unidades salen SOLO cuando tú confirmas el pago. Si reversas el pago o cancelas un pedido ya pagado, vuelven.
+   Despachar o dejar el pedido en "nuevo" no toca el inventario. Devuelve qué hacer con el stock y qué campos cambiar. */
+function planPedido(p, cambio) {
+  const pagado = p.pago_estado === 'confirmado', desc = !!p.stock_descontado;
+  if (cambio.tipo === 'estado') {
+    if (!['nuevo', 'despachado', 'cancelado'].includes(cambio.estado)) throw new Error('Estado no válido.');
+    if (p.estado === 'cancelado' && cambio.estado !== 'cancelado') throw new Error('Un pedido cancelado no se puede reactivar.');
+    if (cambio.estado === p.estado) return { campos: {}, stock: null };
+    return { campos: { estado: cambio.estado }, stock: cambio.estado === 'cancelado' && desc ? 'devolver' : null };
+  }
+  if (p.estado === 'cancelado') throw new Error('Este pedido está cancelado: ya no se puede modificar.');
+  if (cambio.tipo === 'pagar') {
+    if (pagado) throw new Error('Este pedido ya tiene el pago confirmado.');
+    return {
+      campos: { pago_estado: 'confirmado', pago_metodo: String(cambio.metodo || '').trim().slice(0, 40), pago_ref: String(cambio.ref || '').trim().slice(0, 80), pago_fecha: new Date().toISOString() },
+      stock: desc ? null : 'descontar'
+    };
+  }
+  if (cambio.tipo === 'reversar') {
+    if (!pagado) throw new Error('Este pedido no tiene un pago confirmado.');
+    return { campos: { pago_estado: 'pendiente', pago_metodo: '', pago_ref: '', pago_fecha: null }, stock: desc ? 'devolver' : null };
+  }
+  throw new Error('Acción no válida.');
 }
+const resumenStock = (st, cortos) => ({ stock: st === 'descontar' ? 'descontado' : st === 'devolver' ? 'devuelto' : null, cortos: cortos || [] });
 function unirLineas(items) {            // suma cantidades si un producto aparece dos veces
   const m = new Map();
   (items || []).forEach(it => { const x = m.get(it.id); if (x) x.cantidad += it.cantidad; else m.set(it.id, { id: it.id, nombre: it.nombre, cantidad: it.cantidad }); });
@@ -153,6 +173,41 @@ const nuevosPrimero = ps => ps.slice().sort((a, b) => String(b.creado).localeCom
 /* ===================================================================
    MODO DEMOSTRACIÓN (todo en localStorage de este navegador)
    =================================================================== */
+/* ---- documento: cotización / comprobante de pago ----
+   Un solo constructor para todo: el texto de WhatsApp, el asunto y los campos del correo y el papel que ves en el panel.
+   Mientras el pago no esté confirmado es una COTIZACIÓN; al confirmarlo pasa a COMPROBANTE DE PAGO.
+   (No es factura electrónica de la DIAN: es un soporte interno del pedido.) */
+function documento(o, aj) {
+  aj = aj || {}; o = o || {};
+  const c = o.cliente || {}, its = o.items || [], pagado = o.pago_estado === 'confirmado';
+  const tienda = aj.nombre_tienda || 'IMPORTADORA PALIAO';
+  const titulo = pagado ? 'COMPROBANTE DE PAGO' : 'COTIZACIÓN';
+  const estado = pagado ? 'PAGADO' : 'PENDIENTE DE PAGO';
+  const lin = it => `${it.cantidad} × ${it.nombre} — ${dinero(it.precio * it.cantidad)}`;
+  const pagoCli = c.pago || '—';
+  const dir = [c.ciudad, c.direccion].filter(Boolean).join(' · ');
+  const L = [];
+  L.push(`*${tienda}*`, `*${titulo}* · ${estado}`, `Código: *${o.codigo}*`, `Fecha: ${fecha(o.creado)}`, '');
+  L.push('*Cliente*', c.nombre || '—', `Cel: ${c.telefono || '—'}${c.correo ? ' · ' + c.correo : ''}`, dir || '—');
+  if (c.notas) L.push(`Notas: ${c.notas}`);
+  L.push('', '*Productos*', ...its.map(lin), '', `*TOTAL: ${dinero(o.total)}*`, '');
+  if (pagado) {
+    L.push(`Pago confirmado${o.pago_metodo ? ' por ' + o.pago_metodo : ''}${o.pago_ref ? ' · ref. ' + o.pago_ref : ''}${o.pago_fecha ? ' · ' + fecha(o.pago_fecha) : ''}.`);
+  } else {
+    L.push(`Forma de pago elegida: ${pagoCli}`);
+    if (aj.instrucciones_pago) L.push('', '*Cómo pagar*', aj.instrucciones_pago);
+    L.push('', 'Las unidades salen del inventario cuando el pago esté confirmado.');
+  }
+  const campos = [
+    ['Documento', `${titulo} · ${estado}`], ['Pedido', o.codigo], ['Fecha', fecha(o.creado)],
+    ['Cliente', c.nombre || '—'], ['Celular', c.telefono || '—'], ['Correo del cliente', c.correo || '—'],
+    ['Ciudad', c.ciudad || '—'], ['Dirección', c.direccion || '—'], ['Forma de pago elegida', pagoCli], ['Notas', c.notas || '—'],
+    ...its.map((it, i) => ['Producto ' + (i + 1), lin(it)]), ['TOTAL', dinero(o.total)]
+  ];
+  if (pagado) campos.push(['Pago confirmado', `${o.pago_metodo || '—'}${o.pago_ref ? ' · ref. ' + o.pago_ref : ''}`]);
+  return { titulo, estado, pagado, tienda, texto: L.join('\n'), campos, asunto: `${titulo} ${o.codigo} · ${estado} · ${c.nombre || ''} · ${dinero(o.total)}` };
+}
+
 const Demo = (() => {
   const LLAVE = 'palio_demo_v3', LLAVE_SES = 'palio_demo_sesion3';
   let memDB = null, memSes = null;
@@ -199,6 +254,20 @@ const Demo = (() => {
   const sesionGuardada = () => { try { return sessionStorage.getItem(LLAVE_SES); } catch (e) { return memSes; } };
   const sesionPoner = v => { memSes = v; try { v ? sessionStorage.setItem(LLAVE_SES, v) : sessionStorage.removeItem(LLAVE_SES); } catch (e) {} };
 
+  function mutar(id, cambio) {
+    const db = leer(), p = db.pedidos.find(x => x.id === id);
+    if (!p) throw new Error('El pedido no existe.');
+    const r = planPedido(p, cambio), cortos = [];
+    if (r.stock) unirLineas(p.items).forEach(it => {
+      const pr = db.productos.find(x => x.id === it.id); if (!pr) return;
+      if (r.stock === 'descontar') { if (pr.stock < it.cantidad) cortos.push(pr.nombre); pr.stock = Math.max(0, pr.stock - it.cantidad); }
+      else pr.stock += it.cantidad;
+    });
+    Object.assign(p, r.campos); if (r.stock) p.stock_descontado = r.stock === 'descontar';
+    guardar(db);
+    return resumenStock(r.stock, cortos);
+  }
+
   return {
     async catalogo() {
       const db = leer();
@@ -221,7 +290,7 @@ const Demo = (() => {
       }
       const codigo = 'IP-' + Math.random().toString(36).toUpperCase().slice(2, 8);
       db.pedidos.push({
-        id: uid(), codigo, estado: 'nuevo', stock_descontado: false, total, items: lineas, creado: ahora(),
+        id: uid(), codigo, estado: 'nuevo', pago_estado: 'pendiente', stock_descontado: false, total, items: lineas, creado: ahora(),
         cliente: { nombre: v('nombre'), telefono: v('telefono'), correo: v('correo'), ciudad: v('ciudad'), direccion: v('direccion'), pago: v('pago'), notas: v('notas') }
       });
       guardar(db);
@@ -266,21 +335,14 @@ const Demo = (() => {
       async ordenarCategorias(ids) { const db = leer(); ids.forEach((id, i) => { const c = db.categorias.find(x => x.id === id); if (c) c.orden = i + 1; }); guardar(db); },
       async guardarAjustes(a) { const db = leer(); Object.assign(db.ajustes, limpiarAjustes(a)); guardar(db); return db.ajustes; },
       async pedidos() { return leer().pedidos.slice().sort((a, b) => String(b.creado).localeCompare(String(a.creado))); },
-      async estadoPedido(id, estado) {
+      async estadoPedido(id, estado) { return mutar(id, { tipo: 'estado', estado }); },
+      async confirmarPago(id, datos) { return mutar(id, { tipo: 'pagar', metodo: (datos || {}).metodo, ref: (datos || {}).ref }); },
+      async reversarPago(id) { return mutar(id, { tipo: 'reversar' }); },
+      async eliminarPedido(id) {
         const db = leer(), p = db.pedidos.find(x => x.id === id);
         if (!p) throw new Error('El pedido no existe.');
-        if (!['nuevo', 'despachado', 'cancelado'].includes(estado)) throw new Error('Estado no válido.');
-        if (p.estado === estado) return { stock: null, cortos: [] };
-        if (p.estado === 'cancelado') throw new Error('Un pedido cancelado no se puede reactivar.');
-        const accion = accionStock(p, estado), cortos = [];
-        if (accion) unirLineas(p.items).forEach(it => {
-          const pr = db.productos.find(x => x.id === it.id); if (!pr) return;
-          if (accion === 'descontar') { if (pr.stock < it.cantidad) cortos.push(pr.nombre); pr.stock = Math.max(0, pr.stock - it.cantidad); }
-          else pr.stock += it.cantidad;
-        });
-        if (accion) p.stock_descontado = accion === 'descontar';
-        p.estado = estado; guardar(db);
-        return { stock: accion === 'descontar' ? 'descontado' : accion === 'devolver' ? 'devuelto' : null, cortos };
+        if (p.estado !== 'cancelado') throw new Error('Solo se pueden eliminar pedidos cancelados.');
+        db.pedidos = db.pedidos.filter(x => x.id !== id); guardar(db);
       }
     }
   };
@@ -354,7 +416,7 @@ const Fb = (() => {
   const iso = v => v && typeof v.toDate === 'function' ? v.toDate().toISOString() : (typeof v === 'string' ? v : '');
   const normProd = (id, d) => Object.assign({ categoria_id: '', nombre: '', detalle: '', precio: 0, stock: 0, etiqueta: null, imagen_url: null, imagen_path: null, activo: true, creado: '' }, d, { id });
   const normCat = (id, d) => Object.assign({ nombre: '', icono: 'gamepad', orden: 0, creado: '' }, d, { id });
-  const normPed = (id, d) => ({ id, codigo: d.codigo || id, estado: d.estado || 'nuevo', stock_descontado: !!d.stock_descontado, cliente: d.cliente || {}, items: d.items || [], total: d.total || 0, creado: iso(d.creado) });
+  const normPed = (id, d) => ({ id, codigo: d.codigo || id, estado: d.estado || 'nuevo', pago_estado: d.pago_estado || 'pendiente', pago_metodo: d.pago_metodo || '', pago_ref: d.pago_ref || '', pago_fecha: iso(d.pago_fecha) || null, stock_descontado: !!d.stock_descontado, cliente: d.cliente || {}, items: d.items || [], total: d.total || 0, creado: iso(d.creado) });
   const quitarSembrado = a => { const o = Object.assign({}, a); delete o.sembrado; return o; };
   const BASE_AJ = quitarSembrado(AJUSTES_BASE); delete BASE_AJ.id;
   const CATS_INICIALES = [['consolas', 'Consolas', 'gamepad'], ['videojuegos', 'Videojuegos', 'disc'], ['accesorios', 'Accesorios', 'headset'], ['coleccionables', 'Coleccionables', 'ghost'], ['tarjetas-de-regalo', 'Tarjetas de regalo', 'card']];
@@ -394,6 +456,28 @@ const Fb = (() => {
   async function esAdmin() {
     try { await pedidosEnVivo(); return true; }
     catch (e) { if (e && e.code === 'permission-denied') return false; throw e; }
+  }
+  /* Aplica un cambio al pedido (y al inventario si corresponde) en una sola transacción. */
+  async function aplicar(id, cambio) {
+    const { db, fs } = await core();
+    return fs.runTransaction(db, async tx => {
+      const ref = fs.doc(db, 'pedidos', id), snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error('El pedido no existe.');
+      const p = snap.data(), r = planPedido(p, cambio), cortos = [], pend = [];
+      if (r.stock) {
+        for (const it of unirLineas(p.items)) {                // primero todas las lecturas…
+          const pr = fs.doc(db, 'productos', it.id), ps = await tx.get(pr);
+          if (ps.exists()) pend.push([pr, ps.data(), it]);
+        }
+        for (const [pr, d, it] of pend) {                      // …y después las escrituras
+          if (r.stock === 'descontar') { if ((d.stock || 0) < it.cantidad) cortos.push(d.nombre); tx.update(pr, { stock: Math.max(0, (d.stock || 0) - it.cantidad) }); }
+          else tx.update(pr, { stock: (d.stock || 0) + it.cantidad });
+        }
+      }
+      const campos = Object.assign({}, r.campos); if (r.stock) campos.stock_descontado = r.stock === 'descontar';
+      if (Object.keys(campos).length) tx.update(ref, campos);
+      return resumenStock(r.stock, cortos);
+    });
   }
   function codigoPedido() {
     const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', b = new Uint32Array(6);
@@ -524,29 +608,14 @@ const Fb = (() => {
         return Object.assign({ id: 1 }, BASE_AJ, quitarSembrado((await fs.getDoc(ref)).data()));
       },
       async pedidos() { await pedidosEnVivo(); return P.lista.slice(); },
-      async estadoPedido(id, estado) {
-        const { db, fs } = await core();
-        if (!['nuevo', 'despachado', 'cancelado'].includes(estado)) throw new Error('Estado no válido.');
-        return fs.runTransaction(db, async tx => {
-          const ref = fs.doc(db, 'pedidos', id), snap = await tx.get(ref);
-          if (!snap.exists()) throw new Error('El pedido no existe.');
-          const p = snap.data();
-          if (p.estado === estado) return { stock: null, cortos: [] };
-          if (p.estado === 'cancelado') throw new Error('Un pedido cancelado no se puede reactivar.');
-          const accion = accionStock(p, estado), cortos = [], pend = [];
-          if (accion) {
-            for (const it of unirLineas(p.items)) {                // primero todas las lecturas…
-              const pr = fs.doc(db, 'productos', it.id), ps = await tx.get(pr);
-              if (ps.exists()) pend.push([pr, ps.data(), it]);
-            }
-            for (const [pr, d, it] of pend) {                      // …y después las escrituras
-              if (accion === 'descontar') { if ((d.stock || 0) < it.cantidad) cortos.push(d.nombre); tx.update(pr, { stock: Math.max(0, (d.stock || 0) - it.cantidad) }); }
-              else tx.update(pr, { stock: (d.stock || 0) + it.cantidad });
-            }
-          }
-          tx.update(ref, { estado, stock_descontado: accion ? accion === 'descontar' : !!p.stock_descontado });
-          return { stock: accion === 'descontar' ? 'descontado' : accion === 'devolver' ? 'devuelto' : null, cortos };
-        });
+      async estadoPedido(id, estado) { return aplicar(id, { tipo: 'estado', estado }); },
+      async confirmarPago(id, datos) { return aplicar(id, { tipo: 'pagar', metodo: (datos || {}).metodo, ref: (datos || {}).ref }); },
+      async reversarPago(id) { return aplicar(id, { tipo: 'reversar' }); },
+      async eliminarPedido(id) {
+        const { db, fs } = await core(), ref = fs.doc(db, 'pedidos', id), s = await fs.getDoc(ref);
+        if (!s.exists()) throw new Error('El pedido no existe.');
+        if (s.data().estado !== 'cancelado') throw new Error('Solo se pueden eliminar pedidos cancelados.');
+        await fs.deleteDoc(ref);
       }
     }
   });
@@ -554,7 +623,7 @@ const Fb = (() => {
 
 /* ------------------------------------------------------------- exportación */
 window.Datos = Object.assign(
-  { modo: MODO, esc, dinero, fecha, telWA, entero, ICONOS, ICONOS_CATEGORIA, ico, arte, reducirImagen, validarProducto: limpiarProducto },
+  { modo: MODO, esc, dinero, fecha, telWA, entero, documento, ICONOS, ICONOS_CATEGORIA, ico, arte, reducirImagen, validarProducto: limpiarProducto },
   MODO === 'firebase' ? Fb : Demo
 );
 })();

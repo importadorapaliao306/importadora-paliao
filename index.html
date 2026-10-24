@@ -176,6 +176,11 @@ footer.foot a{color:var(--gold-hi)}
 .done .okring{width:84px;height:84px;border-radius:50%;background:var(--gold-grad);color:#0b0905;display:grid;place-items:center;margin-bottom:14px;box-shadow:0 0 0 10px rgba(212,175,55,.12)}
 .done h3{margin:0;font:700 26px/1.1 var(--head)}
 .done p{margin:6px 0;color:var(--muted);max-width:320px}
+.done .pagar{margin:6px 0 14px;max-width:340px;width:100%;text-align:left;padding:14px 16px;border:1px solid var(--line-strong);border-radius:16px;background:var(--card);font-size:14px;color:var(--text)}
+.done .pagar b{display:block;margin-bottom:4px;color:var(--gold-hi);font:700 14px var(--head);letter-spacing:.04em}
+.done .pagar span{white-space:pre-line;color:var(--muted)}
+.done .stack{display:grid;gap:10px;width:100%;max-width:320px;margin-top:6px}
+.done .stack .btn{text-decoration:none}
 .done .code{margin:10px 0 18px;padding:10px 18px;border:1px dashed var(--gold);border-radius:14px;font:700 20px/1 var(--head);color:var(--gold-hi);letter-spacing:.1em}
 .demo{padding:10px 12px;border-radius:12px;background:rgba(212,175,55,.1);border:1px solid var(--line-strong);color:var(--gold-hi);font-size:13px;margin-bottom:14px}
 
@@ -300,8 +305,12 @@ footer.foot a{color:var(--gold-hi)}
       <h3>¡Pedido recibido!</h3>
       <p id="doneMsg"></p>
       <div class="code" id="doneCode"></div>
+      <div class="pagar" id="donePagar" hidden><b>CÓMO PAGAR</b><span id="donePagarTxt"></span></div>
       <p id="doneDemo" hidden class="demo">Modo demostración: no se envió ningún pedido.</p>
-      <button class="btn gold block" data-act="keep-shopping" style="max-width:320px">Seguir comprando</button>
+      <div class="stack">
+        <a class="btn gold block" id="doneWA" target="_blank" rel="noopener" hidden>Enviar mi pedido por WhatsApp</a>
+        <button class="btn ghost block" data-act="keep-shopping">Seguir comprando</button>
+      </div>
     </div>
   </div>
 </aside>
@@ -535,18 +544,16 @@ function showView(v) {
 }
 
 /* ---------- enviar pedido ---------- */
+function armarDoc(r, d) {
+  return D.documento({ codigo: r.codigo, estado: 'nuevo', pago_estado: 'pendiente', cliente: d, items: r.items, total: r.total, creado: new Date().toISOString() }, AJ);
+}
 async function enviarCorreo(r, d) {
   const dest = String(AJ.correo_pedidos || '').trim();
   if (!dest || D.modo === 'demo') return;
-  const payload = {
-    _subject: `Nuevo pedido ${r.codigo} · ${d.nombre} · ${money(r.total)}`, _template: 'table', _captcha: 'false',
-    'Pedido': r.codigo, 'Cliente': d.nombre, 'Celular': d.telefono, 'Ciudad': d.ciudad, 'Dirección': d.direccion,
-    'Pago': d.pago || '—', 'Notas': d.notas || '—'
-  };
-  if (d.correo) { payload['Correo del cliente'] = d.correo; payload.email = d.correo; }
-  r.items.forEach((it, i) => { payload['Producto ' + (i + 1)] = `${it.cantidad} × ${it.nombre} — ${money(it.precio * it.cantidad)}`; });
-  payload['Total'] = money(r.total);
-  payload['Fecha'] = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+  const doc = armarDoc(r, d);
+  const payload = { _subject: doc.asunto, _template: 'table', _captcha: 'false' };
+  doc.campos.forEach(([k, v]) => { payload[k] = v; });
+  if (d.correo) payload.email = d.correo;            // solo como "responder a": el correo se envía a TU bandeja
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 9000);
   try {
     await fetch('https://formsubmit.co/ajax/' + encodeURIComponent(dest), {
@@ -564,8 +571,14 @@ async function enviarPedido(ev) {
   try {
     const r = await D.crearPedido(d, lines().map(l => ({ id: l.p.id, cantidad: l.q })));
     await enviarCorreo(r, d);
+    const doc = armarDoc(r, d);
     $('#doneCode').textContent = r.codigo;
-    $('#doneMsg').textContent = `Gracias, ${String(d.nombre).trim().split(/\s+/)[0]}. Te contactaremos al ${d.telefono} para confirmar el pago y el despacho.`;
+    $('#doneMsg').textContent = `Gracias, ${String(d.nombre).trim().split(/\s+/)[0]}. Tu cotización quedó registrada. Tu pedido se despacha cuando el pago esté confirmado; te escribiremos al ${d.telefono}.`;
+    const pagar = String(AJ.instrucciones_pago || '').trim();
+    $('#donePagar').hidden = !pagar; $('#donePagarTxt').textContent = pagar;
+    const wa = $('#doneWA'), numWA = String(AJ.whatsapp || '').trim();
+    wa.hidden = !numWA;
+    if (numWA) wa.href = D.telWA(numWA) + '?text=' + encodeURIComponent('Hola, acabo de hacer este pedido en ' + doc.tienda + ':\n\n' + doc.texto);
     $('#doneDemo').hidden = D.modo !== 'demo';
     cart = {}; guardarCarrito(); form.reset();
     showView('done');
