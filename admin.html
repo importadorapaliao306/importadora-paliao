@@ -323,7 +323,6 @@ dialog.dlg>form{display:flex;flex-direction:column;max-height:92vh}
         <div class="field"><label for="aWhats">Tu WhatsApp <small>(con indicativo)</small></label><input id="aWhats" inputmode="tel" maxlength="20" placeholder="573001234567">
           <span class="ayuda">Al terminar su pedido, el cliente ve un botón que le abre WhatsApp hacia este número con la cotización ya escrita; solo le falta tocar "Enviar".</span></div>
         <div class="field"><label for="aNota">Nota sobre el envío</label><input id="aNota" maxlength="200"></div>
-        <div class="field"><label for="aPagos">Métodos de pago <small>(uno por línea)</small></label><textarea id="aPagos" rows="4"></textarea></div>
         <div class="field"><label for="aInstr">Cómo debe pagar el cliente <small>(opcional, se muestra en su pantalla final)</small></label><textarea id="aInstr" rows="3" maxlength="600" placeholder="Ej.: Nequi 300 000 0000 a nombre de Daniel."></textarea></div>
         <div class="formerr" id="ajErr" hidden></div>
         <button class="btn gold" type="submit" id="ajGuardar">Guardar cambios</button>
@@ -793,7 +792,7 @@ function cardPedido(o) {
   return `<article class="ped" data-id="${esc(o.id)}">
     <div class="pedhead"><span class="codigo">${esc(o.codigo)}</span><span class="est est-${esc(o.estado)}">${ETQ[o.estado] || esc(o.estado)}</span><span class="pg pg-${pg ? 'confirmado' : 'pendiente'}">${pg ? 'Confirmado' : 'Por confirmar'}</span><span class="muted">${esc(D.fecha(o.creado))}</span><span class="ptotal gtext">${dinero(o.total)}</span></div>
     <div class="pedbody">
-      <div><b>${esc(c.nombre)}</b><br>${esc(c.telefono)}${c.correo ? ' · ' + esc(c.correo) : ''}<br>${esc(c.ciudad)} · ${esc(c.direccion)}<br><span class="muted">Forma elegida: ${esc(c.pago || '—')}${c.notas ? '<br>Notas: ' + esc(c.notas) : ''}</span>
+      <div><b>${esc(c.nombre)}</b><br>${esc(c.telefono)}${c.correo ? ' · ' + esc(c.correo) : ''}<br>${esc(c.ciudad)} · ${esc(c.direccion)}${c.notas ? `<br><span class="muted">Notas: ${esc(c.notas)}</span>` : ''}
         ${pg && o.pago_fecha ? `<div class="pagoinfo">✔ Confirmado · ${esc(D.fecha(o.pago_fecha))}</div>` : ''}</div>
       <ul class="its">${its.map(it => `<li><span>${it.cantidad} × ${esc(it.nombre)}</span><span>${dinero(it.precio * it.cantidad)}</span></li>`).join('')}</ul>
     </div>
@@ -920,7 +919,7 @@ function renderAjustes() {
   const a = S.aj;
   $('#aNombre').value = a.nombre_tienda || ''; $('#aEslogan').value = a.eslogan || '';
   $('#aCorreo').value = a.correo_pedidos || ''; $('#aWhats').value = a.whatsapp || '';
-  $('#aNota').value = a.nota_envio || ''; $('#aPagos').value = (a.metodos_pago || []).join('\n'); $('#aInstr').value = a.instrucciones_pago || '';
+  $('#aNota').value = a.nota_envio || ''; $('#aInstr').value = a.instrucciones_pago || '';
   $('#sesionInfo').textContent = S.sesion ? `Sesión iniciada como ${S.sesion.usuario || S.sesion.email}.` : '';
 }
 $('#formAjustes').addEventListener('submit', async ev => {
@@ -930,7 +929,7 @@ $('#formAjustes').addEventListener('submit', async ev => {
     try {
       S.aj = await D.admin.guardarAjustes({
         nombre_tienda: $('#aNombre').value, eslogan: $('#aEslogan').value, correo_pedidos: $('#aCorreo').value,
-        whatsapp: $('#aWhats').value, nota_envio: $('#aNota').value, metodos_pago: $('#aPagos').value.split('\n'), instrucciones_pago: $('#aInstr').value
+        whatsapp: $('#aWhats').value, nota_envio: $('#aNota').value, instrucciones_pago: $('#aInstr').value
       });
       renderTodo(); toast('Ajustes guardados ✓');
     } catch (e) { mostrarError(err, e.message); }
