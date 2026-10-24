@@ -62,6 +62,8 @@ const ICONOS = {
   eyeoff: '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>',
   camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  left: '<path d="m15 18-6-6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
   image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
   ajustes: '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>'
 };
@@ -84,8 +86,12 @@ function cargarImagen(file) {
     im.src = u;
   });
 }
-/* Recorta al centro en cuadrado y reduce: así la foto se ve igual en el panel y en la tienda y pesa poco (se guarda dentro de la base de datos). */
-async function reducirImagen(file, lado = 480, calidad = 0.8) {
+/* Recorta al centro en cuadrado y reduce: así la foto se ve igual en el panel y en la tienda y pesa poco (se guarda dentro de la base de datos).
+   Si la foto queda muy pesada baja un poco la calidad, para que quepan varias fotos por producto. */
+const MAX_FOTOS = 6;
+const cuantasFotos = p => p ? Math.max(+p.n_fotos || 0, Array.isArray(p.imagenes) ? p.imagenes.length : 0, p.imagen_url ? 1 : 0) : 0;
+const fotosDe = p => (p && Array.isArray(p.imagenes) && p.imagenes.length) ? p.imagenes : (p && p.imagen_url ? [p.imagen_url] : []);
+async function reducirImagen(file, lado = 640, calidad = 0.8) {
   if (!file || !/^image\//.test(file.type)) throw new Error('Elige un archivo de imagen (JPG, PNG o WebP).');
   if (file.size > 25 * 1024 * 1024) throw new Error('La imagen es demasiado pesada (máximo 25 MB).');
   const im = await cargarImagen(file);
@@ -95,7 +101,10 @@ async function reducirImagen(file, lado = 480, calidad = 0.8) {
   cx.fillStyle = '#0b0905'; cx.fillRect(0, 0, lado, lado);
   cx.imageSmoothingQuality = 'high';
   cx.drawImage(im, (w - s) / 2, (h - s) / 2, s, s, 0, 0, lado, lado);
-  return new Promise((ok, mal) => cv.toBlob(b => b ? ok(b) : mal(new Error('No se pudo procesar la imagen.')), 'image/jpeg', calidad));
+  const aBlob = q => new Promise((ok, mal) => cv.toBlob(b => b ? ok(b) : mal(new Error('No se pudo procesar la imagen.')), 'image/jpeg', q));
+  let b = await aBlob(calidad);
+  for (const q of [0.68, 0.56]) { if (b.size <= 100 * 1024) break; b = await aBlob(q); }
+  return b;
 }
 const blobADataURL = blob => new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => mal(new Error('No se pudo leer la imagen.')); r.readAsDataURL(blob); });
 
@@ -110,6 +119,11 @@ function limpiarProducto(p) {
   if ('etiqueta' in p) o.etiqueta = String(p.etiqueta || '').trim().slice(0, 20) || null;
   if ('imagen_url' in p) o.imagen_url = p.imagen_url || null;
   if ('imagen_path' in p) o.imagen_path = p.imagen_path || null;
+  if ('imagenes' in p) {
+    const l = (Array.isArray(p.imagenes) ? p.imagenes : []).filter(u => typeof u === 'string' && u).slice(0, MAX_FOTOS);
+    if (l.reduce((s, u) => s + u.length, 0) > 880000) throw new Error('Las fotos pesan demasiado en total. Quita alguna o usa fotos más sencillas.');
+    o.imagenes = l; o.n_fotos = l.length; o.imagen_url = l[0] || null; o.imagen_path = null;   // la primera es la portada
+  }
   if ('activo' in p) o.activo = !!p.activo;
   return o;
 }
@@ -210,7 +224,7 @@ const Demo = (() => {
       .map(([nombre, icono], i) => ({ id: 'cat-' + (i + 1), nombre, icono, orden: i + 1, creado: ahora() }));
     const P = (i, c, nombre, detalle, precio, stock, etiqueta) => ({
       id: 'prod-' + i, categoria_id: 'cat-' + c, nombre, detalle, precio, stock, etiqueta: etiqueta || null,
-      imagen_url: null, imagen_path: null, activo: true, creado: new Date(t - i * 1000).toISOString()
+      imagen_url: null, imagen_path: null, imagenes: [], activo: true, creado: new Date(t - i * 1000).toISOString()
     });
     return {
       ajustes: Object.assign({}, AJUSTES_BASE),
@@ -260,6 +274,7 @@ const Demo = (() => {
   }
 
   return {
+    async fotosTodas(p) { return fotosDe(p); },
     async catalogo() {
       const db = leer();
       return { ajustes: db.ajustes, categorias: ordenarCats(db.categorias), productos: nuevosPrimero(db.productos.filter(p => p.activo)) };
@@ -305,11 +320,12 @@ const Demo = (() => {
           const x = db.productos.find(q => q.id === p.id); if (!x) throw new Error('Ese producto ya no existe.');
           Object.assign(x, campos); guardar(db); return x;
         }
-        const x = Object.assign({ id: uid(), detalle: '', stock: 0, etiqueta: null, imagen_url: null, imagen_path: null, activo: true, creado: ahora() }, campos);
+        const x = Object.assign({ id: uid(), detalle: '', stock: 0, etiqueta: null, imagen_url: null, imagen_path: null, imagenes: [], activo: true, creado: ahora() }, campos);
         if (!x.categoria_id || x.precio === undefined) throw new Error('Faltan datos del producto.');
         db.productos.push(x); guardar(db); return x;
       },
       async borrarProducto(id) { const db = leer(); db.productos = db.productos.filter(p => p.id !== id); guardar(db); },
+      async fotosTodas(p) { const x = leer().productos.find(q => q.id === (p && p.id)); return fotosDe(x || p); },
       async subirImagen(blob) { return { url: await blobADataURL(blob), path: 'demo-' + uid() }; },
       async borrarImagen() {},
       async guardarCategoria(c) {
@@ -405,7 +421,18 @@ const Fb = (() => {
   const visible = email => String(email || '').endsWith('@' + DOMINIO_USUARIOS) ? String(email).slice(0, -(DOMINIO_USUARIOS.length + 1)) : String(email || '');
 
   const iso = v => v && typeof v.toDate === 'function' ? v.toDate().toISOString() : (typeof v === 'string' ? v : '');
-  const normProd = (id, d) => Object.assign({ categoria_id: '', nombre: '', detalle: '', precio: 0, stock: 0, etiqueta: null, imagen_url: null, imagen_path: null, activo: true, creado: '' }, d, { id });
+  const normProd = (id, d) => Object.assign({ categoria_id: '', nombre: '', detalle: '', precio: 0, stock: 0, etiqueta: null, imagen_url: null, imagen_path: null, imagenes: [], n_fotos: 0, activo: true, creado: '' }, d, { id });
+  /* El catálogo solo trae la portada (rápido); las demás fotos viven en config/fotos_<id> y se piden cuando alguien las abre. */
+  const extrasCache = {};
+  async function fotosTodas(p, sinCache) {
+    const base = fotosDe(p);
+    if (!p || cuantasFotos(p) <= base.length) return base;
+    if (sinCache || !extrasCache[p.id]) {
+      const { db, fs } = await core(), s = await fs.getDoc(fs.doc(db, 'config', 'fotos_' + p.id));
+      extrasCache[p.id] = s.exists() ? (s.data().lista || []) : [];
+    }
+    return base.slice(0, 1).concat(extrasCache[p.id]);
+  }
   const normCat = (id, d) => Object.assign({ nombre: '', icono: 'gamepad', orden: 0, creado: '' }, d, { id });
   const normPed = (id, d) => ({ id, codigo: d.codigo || id, estado: d.estado || 'nuevo', pago_estado: d.pago_estado || 'pendiente', pago_metodo: d.pago_metodo || '', pago_ref: d.pago_ref || '', pago_fecha: iso(d.pago_fecha) || null, stock_descontado: !!d.stock_descontado, cliente: d.cliente || {}, items: d.items || [], total: d.total || 0, creado: iso(d.creado) });
   const quitarSembrado = a => { const o = Object.assign({}, a); delete o.sembrado; return o; };
@@ -477,7 +504,9 @@ const Fb = (() => {
   }
 
   return protegido({
+    fotosTodas: p => fotosTodas(p),
     async catalogo() {
+      Object.keys(extrasCache).forEach(k => delete extrasCache[k]);
       const r = await leer(true), x = armar(r);
       x.productos = x.productos.filter(p => p.activo !== false);
       return x;
@@ -552,18 +581,30 @@ const Fb = (() => {
       },
       async guardarProducto(p) {
         const { db, fs } = await core(), campos = limpiarProducto(p);
+        const lista = campos.imagenes; delete campos.imagenes;      // las fotos extra se guardan aparte: el catálogo solo carga la portada
+        const extras = (b, id) => {
+          if (lista === undefined) return;
+          const r = fs.doc(db, 'config', 'fotos_' + id);
+          if (lista.length > 1) b.set(r, { lista: lista.slice(1) }); else b.delete(r);
+          delete extrasCache[id];
+        };
         if (p.id) {
-          const ref = fs.doc(db, 'productos', p.id);
-          await fs.updateDoc(ref, campos);
+          const ref = fs.doc(db, 'productos', p.id), b = fs.writeBatch(db);
+          b.update(ref, campos); extras(b, p.id); await b.commit();
           return normProd(ref.id, (await fs.getDoc(ref)).data());
         }
         const ref = fs.doc(fs.collection(db, 'productos'));
-        const x = Object.assign({ detalle: '', stock: 0, etiqueta: null, imagen_url: null, imagen_path: null, activo: true, creado: new Date().toISOString() }, campos);
+        const x = Object.assign({ detalle: '', stock: 0, etiqueta: null, imagen_url: null, imagen_path: null, n_fotos: 0, activo: true, creado: new Date().toISOString() }, campos);
         if (!x.categoria_id || x.precio === undefined) throw new Error('Faltan datos del producto.');
-        await fs.setDoc(ref, x);
+        const b = fs.writeBatch(db); b.set(ref, x); extras(b, ref.id); await b.commit();
         return normProd(ref.id, x);
       },
-      async borrarProducto(id) { const { db, fs } = await core(); await fs.deleteDoc(fs.doc(db, 'productos', id)); },
+      async borrarProducto(id) {
+        const { db, fs } = await core(), b = fs.writeBatch(db);
+        b.delete(fs.doc(db, 'productos', id)); b.delete(fs.doc(db, 'config', 'fotos_' + id)); await b.commit();
+        delete extrasCache[id];
+      },
+      fotosTodas: p => fotosTodas(p, true),
       async subirImagen(blob) {
         if (blob.size > 450 * 1024) throw new Error('La foto quedó muy pesada. Prueba con otra imagen.');
         return { url: await blobADataURL(blob), path: null };
@@ -614,7 +655,7 @@ const Fb = (() => {
 
 /* ------------------------------------------------------------- exportación */
 window.Datos = Object.assign(
-  { modo: MODO, esc, dinero, fecha, telWA, entero, documento, ICONOS, ICONOS_CATEGORIA, ico, arte, reducirImagen, validarProducto: limpiarProducto },
+  { modo: MODO, esc, dinero, fecha, telWA, entero, documento, ICONOS, ICONOS_CATEGORIA, ico, arte, reducirImagen, fotos: fotosDe, nFotos: cuantasFotos, MAX_FOTOS, validarProducto: limpiarProducto },
   MODO === 'firebase' ? Fb : Demo
 );
 })();
