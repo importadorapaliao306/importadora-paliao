@@ -86,6 +86,23 @@ main{padding-top:104px;padding-bottom:110px}
 .media{position:relative;aspect-ratio:1;border-radius:18px;overflow:hidden;background:#0b0905}
 .media img{width:100%;height:100%;object-fit:cover;display:block}
 .card.out .media img{filter:grayscale(.85) brightness(.6)}
+.media[data-act]{cursor:zoom-in}
+.nfotos{position:absolute;right:8px;bottom:8px;display:flex;align-items:center;gap:5px;padding:5px 9px;border-radius:10px;background:rgba(0,0,0,.78);color:var(--gold-hi);border:1px solid var(--line-strong);font:700 12px/1 var(--body);pointer-events:none}
+.lb{position:fixed;inset:0;z-index:70;background:#050402;display:flex;flex-direction:column}
+.lb[hidden]{display:none}
+.lbtop{display:flex;align-items:center;gap:12px;padding:max(12px,env(safe-area-inset-top)) 14px 8px}
+.lbtop #lbTitle{flex:1;min-width:0;font:600 15px var(--head);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lbtop #lbCount{color:var(--gold-hi);font-weight:700;font-size:14px}
+.lbtrack{flex:1;min-height:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior:contain}
+.lbtrack::-webkit-scrollbar{display:none}
+.lbslide{flex:0 0 100%;min-width:0;scroll-snap-align:center;scroll-snap-stop:always;display:grid;place-items:center;padding:8px 14px max(18px,env(safe-area-inset-bottom))}
+.lbslide img{width:min(100%,calc(100vh - 150px));max-height:100%;aspect-ratio:1;object-fit:cover;border-radius:20px;border:1px solid var(--line-strong);background:#0b0905}
+.lbslide .lbwait{color:var(--muted);font-size:14px;text-align:center}
+.lbnav{display:none;position:absolute;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;border:1px solid var(--line-strong);background:rgba(0,0,0,.7);color:var(--gold-hi);place-items:center;padding:0}
+.lbnav.prev{left:14px}.lbnav.next{right:14px}
+.lbnav:disabled{opacity:.25}
+.lbnav[hidden]{display:none!important}
+@media(hover:hover){.lbnav{display:grid}}
 .tags{position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
 .tag{padding:5px 11px;border-radius:10px;font:700 12px/1.1 var(--body)}
 .tag.et{background:var(--gold-grad);color:#0b0905}
@@ -311,6 +328,13 @@ footer.foot a{color:var(--gold-hi)}
   </div>
 </aside>
 
+<div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="Fotos del producto">
+  <div class="lbtop"><span id="lbTitle"></span><span id="lbCount"></span><button class="icon-btn dark" data-act="lb-close" data-ico="close" aria-label="Cerrar fotos"></button></div>
+  <div class="lbtrack" id="lbTrack"></div>
+  <button class="lbnav prev" data-act="lb-prev" data-ico="left" data-size="26" aria-label="Foto anterior"></button>
+  <button class="lbnav next" data-act="lb-next" data-ico="right" data-size="26" aria-label="Foto siguiente"></button>
+</div>
+
 <script src="config.js"></script>
 <script src="datos.js"></script>
 <script>
@@ -418,11 +442,13 @@ function cardHTML(p) {
          </div>
          <button class="btn gold add" data-act="add" data-id="${id}">${ico('cart', 18)} Agregar</button>
        </div>`;
+  const cover = D.fotos(p)[0] || null, nf = D.nFotos(p);
   return `<article class="card${out ? ' out' : ''}">
-    <div class="media">
-      <img src="${esc(p.imagen_url || fb)}" data-fb="${p.imagen_url ? esc(fb) : ''}" alt="${esc(p.nombre)}" loading="lazy" width="400" height="400">
+    <div class="media"${cover ? ` data-act="zoom" data-id="${id}" role="button" tabindex="0" aria-label="Ver ${nf > 1 ? 'las ' + nf + ' fotos' : 'la foto'} de ${esc(p.nombre)}"` : ''}>
+      <img src="${esc(cover || fb)}" data-fb="${cover ? esc(fb) : ''}" alt="${esc(p.nombre)}" loading="lazy" width="400" height="400">
       ${tags ? `<div class="tags">${tags}</div>` : ''}
       ${out ? `<span class="tag out">Agotado</span>` : ''}
+      ${nf > 1 ? `<span class="nfotos">${ico('image', 14)} ${nf}</span>` : ''}
     </div>
     <h3>${esc(p.nombre)}</h3>
     <p class="det">${esc(p.detalle || '')}</p>
@@ -586,12 +612,63 @@ async function enviarPedido(ev) {
   }
 }
 
+/* ---------- visor de fotos ---------- */
+const LB = { tok: 0, desde: null };
+const lbTrack = () => $('#lbTrack');
+function lbSlide(url, k, p, falla) {
+  const alt = `${esc(p.nombre)} · foto ${k + 1}`;
+  return url
+    ? `<div class="lbslide" data-act="lb-bg"><img src="${esc(url)}" alt="${alt}"></div>`
+    : `<div class="lbslide" data-act="lb-bg"><span class="lbwait">${falla ? 'No se pudo cargar esta foto.' : 'Cargando foto…'}</span></div>`;
+}
+function lbActual() { const tr = lbTrack(); return tr.clientWidth ? Math.round(tr.scrollLeft / tr.clientWidth) : 0; }
+function lbEstado() {
+  const tr = lbTrack(), n = tr.children.length, i = Math.min(n - 1, Math.max(0, lbActual()));
+  $('#lbCount').textContent = n > 1 ? `${i + 1} / ${n}` : '';
+  $('[data-act="lb-prev"]').disabled = i <= 0; $('[data-act="lb-next"]').disabled = i >= n - 1;
+  $('[data-act="lb-prev"]').hidden = $('[data-act="lb-next"]').hidden = n <= 1;
+}
+function lbIr(i, suave) {
+  const tr = lbTrack(), n = tr.children.length; i = Math.min(n - 1, Math.max(0, i));
+  tr.scrollTo({ left: i * tr.clientWidth, behavior: suave ? 'smooth' : 'auto' });
+}
+async function abrirVisor(id) {
+  const p = byId[id]; if (!p) return;
+  const base = D.fotos(p), n = Math.max(D.nFotos(p), base.length), tok = ++LB.tok, tr = lbTrack();
+  LB.desde = document.activeElement;
+  $('#lbTitle').textContent = p.nombre;
+  tr.innerHTML = Array.from({ length: n }, (_, k) => lbSlide(base[k], k, p, false)).join('');
+  $('#lb').hidden = false; document.body.style.overflow = 'hidden';
+  tr.scrollLeft = 0; lbEstado();
+  $('[data-act="lb-close"]').focus();
+  if (n > base.length) {                                   // las demás fotos se piden solo cuando alguien las abre
+    let todas = null;
+    try { todas = await D.fotosTodas(p); } catch (e) {}
+    if (LB.tok !== tok || $('#lb').hidden) return;
+    const cur = lbActual();
+    tr.innerHTML = Array.from({ length: n }, (_, k) => lbSlide(todas && todas[k], k, p, !todas)).join('');
+    tr.scrollLeft = cur * tr.clientWidth; lbEstado();
+  }
+}
+function cerrarVisor() {
+  if ($('#lb').hidden) return;
+  LB.tok++; $('#lb').hidden = true; lbTrack().innerHTML = ''; document.body.style.overflow = '';
+  if (LB.desde && LB.desde.focus) { try { LB.desde.focus(); } catch (e) {} }
+}
+let lbRaf = 0;
+lbTrack().addEventListener('scroll', () => { cancelAnimationFrame(lbRaf); lbRaf = requestAnimationFrame(lbEstado); });
+
 /* ---------- eventos ---------- */
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act]'); if (!t) return;
   const a = t.dataset.act, id = t.dataset.id;
   switch (a) {
     case 'add': agregarDesdeTarjeta(t); break;
+    case 'zoom': abrirVisor(id); break;
+    case 'lb-close': cerrarVisor(); break;
+    case 'lb-bg': if (e.target === t) cerrarVisor(); break;
+    case 'lb-prev': lbIr(lbActual() - 1, true); break;
+    case 'lb-next': lbIr(lbActual() + 1, true); break;
     case 'q-': ajustarTarjeta(t, -1); break;
     case 'q+': ajustarTarjeta(t, +1); break;
     case 'inc': cambiar(id, +1); break;
@@ -618,6 +695,13 @@ document.addEventListener('change', e => {
   else if (t.matches('[data-cartqty]')) fijarCantidad(t.dataset.id, t.value);
 });
 document.addEventListener('keydown', e => {
+  if (!$('#lb').hidden) {
+    if (e.key === 'Escape') cerrarVisor();
+    else if (e.key === 'ArrowLeft') lbIr(lbActual() - 1, true);
+    else if (e.key === 'ArrowRight') lbIr(lbActual() + 1, true);
+    return;
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.media[data-act="zoom"]')) { e.preventDefault(); abrirVisor(e.target.dataset.id); return; }
   if (e.key === 'Escape') closePanels();
   if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-qty]')) {
     e.preventDefault(); e.target.dispatchEvent(new Event('change', { bubbles: true }));
